@@ -512,26 +512,7 @@ let justMessage
         
         if not shouldBeSkipped then
             let! usrMsgCount = DB.countUniqueUserMsg message.From.Id
-            
-            match ml.Predict(message.TextOrCaption, usrMsgCount, message.Entities)  with
-            | Some prediction ->
-                %mlActivity.SetTag("spamScoreMl", prediction.Score)
-                
-                if prediction.Score >= botConfig.MlSpamThreshold then
-                    // delete message
-                    do! killSpammerAutomated botClient botConfig message logger botConfig.MlSpamDeletionEnabled prediction.Score
-
-                    if botConfig.MlSpamAutobanEnabled then
-                        // trigger auto-ban check
-                        do! autoBan botUser botClient botConfig message logger
-                elif prediction.Score >= botConfig.MlWarningThreshold then
-                    // just warn
-                    do! killSpammerAutomated botClient botConfig message logger false prediction.Score
-                else
-                    // not a spam
-                    ()
-            | None ->
-                let checkEntity (entity:MessageEntity) =
+            let checkEntity (entity:MessageEntity) =
                     // Define all zero-width and whitespace-like characters to check
                     let zeroWidthChars = 
                         [|
@@ -552,16 +533,38 @@ let justMessage
                             Char.IsControl c ||  Array.contains c zeroWidthChars)
                     | _ -> false
                     
-                let shouldDelete =
+            let shouldDelete =
                     message.Entities
                      |> Array.exists checkEntity
                      
-                if shouldDelete then
-                    // delete message
-                    do! killSpammerAutomated botClient botConfig message logger botConfig.MlSpamDeletionEnabled 0.0
-                else
-                // no prediction (error or not ready yet)
+            
+            match ml.Predict(message.TextOrCaption, usrMsgCount, message.Entities), shouldDelete  with
+            | _, true -> 
+                // delete message
+                do! killSpammerAutomated botClient botConfig message logger botConfig.MlSpamDeletionEnabled 0.0
                 ()
+            | Some prediction, _ ->
+                %mlActivity.SetTag("spamScoreMl", prediction.Score)
+                
+                if prediction.Score >= botConfig.MlSpamThreshold then
+                    // delete message
+                    do! killSpammerAutomated botClient botConfig message logger botConfig.MlSpamDeletionEnabled prediction.Score
+
+                    if botConfig.MlSpamAutobanEnabled then
+                        // trigger auto-ban check
+                        do! autoBan botUser botClient botConfig message logger
+                elif prediction.Score >= botConfig.MlWarningThreshold then
+                    // just warn
+                    do! killSpammerAutomated botClient botConfig message logger false prediction.Score
+                
+                    // not a spam
+                    ()
+                else
+                // no spam
+                ()
+            | None, _->
+     
+              ()
 
     do!
         message
